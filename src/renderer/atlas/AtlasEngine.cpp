@@ -332,7 +332,7 @@ try
         _api.bufferLineColumn.emplace_back(column);
 
         const BufferLineMetadata metadata{ _api.currentColor, _api.flags };
-        std::fill_n(_api.bufferLineMetadata.data() + x, column - x, metadata);
+        std::fill_n(_getBufferLineMetadata(x, y), column - x, metadata);
     }
 
     return S_OK;
@@ -349,8 +349,9 @@ try
         WI_UpdateFlagsInMask(_api.flags, CellFlags::Underline | CellFlags::UnderlineDotted | CellFlags::UnderlineDouble, CellFlags::Underline);
 
         const BufferLineMetadata metadata{ _api.currentColor, _api.flags };
-        const size_t x = _api.lastPaintBufferLineCoord.x;
-        std::fill_n(_api.bufferLineMetadata.data() + x, _api.bufferLineMetadata.size() - x, metadata);
+        const auto y = _api.lastPaintBufferLineCoord.y;
+        const auto x = _api.lastPaintBufferLineCoord.x;
+        std::fill_n(_getBufferLineMetadata(x, y), _r.metadata.size() - x, metadata);
     }
     return S_OK;
 }
@@ -967,13 +968,13 @@ void AtlasEngine::_recreateSizeDependentResources()
         _r.cellCount = _api.cellCount;
         _r.rows = {};
         _r.rows.resize(_r.cellCount.y);
+        _r.metadata = Buffer<BufferLineMetadata>{ totalCellCount };
 
         // .clear() doesn't free the memory of these buffers.
         // This code allows them to shrink again.
         _api.bufferLine = {};
         _api.bufferLine.reserve(projectedTextSize);
         _api.bufferLineColumn.reserve(projectedTextSize + 1);
-        _api.bufferLineMetadata = Buffer<BufferLineMetadata>{ _api.cellCount.x };
         _api.analysisResults = {};
 
         _api.clusterMap = Buffer<u16>{ projectedTextSize };
@@ -1126,6 +1127,14 @@ const AtlasEngine::Buffer<DWRITE_FONT_AXIS_VALUE>& AtlasEngine::_getTextFormatAx
     return _r.textFormatAxes[italic][bold];
 }
 
+
+AtlasEngine::BufferLineMetadata* AtlasEngine::_getBufferLineMetadata(u16 x, u16 y) noexcept
+{
+    assert(x < _r.cellCount.x);
+    assert(y < _r.cellCount.y);
+    return _r.metadata.data() + static_cast<size_t>(_r.cellCount.x) * y + x;
+}
+
 void AtlasEngine::_flushBufferLine()
 {
     if (_api.bufferLine.empty())
@@ -1176,6 +1185,7 @@ void AtlasEngine::_flushBufferLine()
 
     auto& row = _r.rows[_api.lastPaintBufferLineCoord.y];
     const auto& textFormatAxis = _getTextFormatAxis(_api.attributes.bold, _api.attributes.italic);
+    const auto metadata = _getBufferLineMetadata(0, _api.lastPaintBufferLineCoord.y);
 
     TextAnalysisSource analysisSource{ _api.bufferLine.data(), gsl::narrow<UINT32>(_api.bufferLine.size()) };
     TextAnalysisSink analysisSink{ _api.analysisResults };
@@ -1250,7 +1260,7 @@ void AtlasEngine::_flushBufferLine()
                 for (size_t i = 0; i < complexityLength; ++i)
                 {
                     const auto col = _api.bufferLineColumn[idx + i];
-                    const auto colors = _api.bufferLineMetadata[col].colors;
+                    const auto colors = metadata[col].colors;
                     f32 glyphAdvance;
 
                     for (size_t j = 1;; ++j)
@@ -1267,7 +1277,7 @@ void AtlasEngine::_flushBufferLine()
                     row.glyphOffsets.emplace_back();
                     row.colors.emplace_back(colors.x);
 
-                    std::fill_n(_r.backgroundBitmap.begin() + _api.lastPaintBufferLineCoord.y * _api.cellCount.x + col, 1, _api.bufferLineMetadata[col].colors.y);
+                    std::fill_n(_r.backgroundBitmap.begin() + _api.lastPaintBufferLineCoord.y * _api.cellCount.x + col, 1, metadata[col].colors.y);
                 }
             }
             else
@@ -1390,7 +1400,7 @@ void AtlasEngine::_flushBufferLine()
 
                         const auto col1 = _api.bufferLineColumn[a.textPosition + beg];
                         const auto col2 = _api.bufferLineColumn[a.textPosition + i];
-                        const auto colors = _api.bufferLineMetadata[col1].colors;
+                        const auto colors = metadata[col1].colors;
 
                         {
                             const auto expectedAdvance = (col2 - col1) * _r.cellSizeDIP.x;
@@ -1404,7 +1414,7 @@ void AtlasEngine::_flushBufferLine()
 
                         row.colors.insert(row.colors.end(), nextCluster - prevCluster, colors.x);
 
-                        std::fill_n(_r.backgroundBitmap.begin() + _api.lastPaintBufferLineCoord.y * _api.cellCount.x + col1, col2 - col1, _api.bufferLineMetadata[col1].colors.y);
+                        std::fill_n(_r.backgroundBitmap.begin() + _api.lastPaintBufferLineCoord.y * _api.cellCount.x + col1, col2 - col1, metadata[col1].colors.y);
 
                         prevCluster = nextCluster;
                         beg = i;
